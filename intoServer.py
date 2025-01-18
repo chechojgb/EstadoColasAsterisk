@@ -83,6 +83,16 @@ else:
 
 
 
+def colorize_state(state):
+    if "Not in use" in state:
+        return f"\033[1;32m{state}\033[0m"  # Verde
+    elif "On Hold" in state:
+        return f"\033[1;33m{state}\033[0m"  # Amarillo
+    elif "Busy" in state:
+        return f"\033[1;31m{state}\033[0m"  # Rojo
+    else:
+        return state  
+
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -90,35 +100,33 @@ try:
     print(f"Conectando a {SERVER_ID} como {USER_SERVER}...")
     ssh.connect(hostname=SERVER_ID, username=USER_SERVER, password=PASSWORD_SERVER)
 
-    # Ejecutar el comando
     command = rasterisk
     stdin, stdout, stderr = ssh.exec_command(command)
 
-    # Obtener la salida y procesarla
-    output = stdout.read().decode()  # La salida del comando
-    print("Salida del comando:")
-    print(output)  # Imprimir para verificar si tiene la información esperada
+    output = stdout.read().decode()
+    print("Salida completa del comando antes de limpiar:")
+    print(repr(output)) 
 
-    error = stderr.read().decode()
+    ansi_escape = re.compile(r'\x1B\[.*?m')
+    clean_output = ansi_escape.sub('', output)
+    print("Salida limpia del comando:")
+    print(clean_output)
 
-    if error:
-        print("Errores:")
-        print(error)
+    pattern = r"SIP/(\d+)\s+\((.*?)\)\s+\((.*?)\)"
+    matches = re.findall(pattern, clean_output)
+
+    # print(selected_campaign)
     
-    # Filtrar las líneas que contienen los valores que necesitamos (número y estado)
-    pattern = r"(\d+)\s+\((.*?)\)\s+\((.*?)\)"  # Captura ambos paréntesis
-    matches = re.findall(pattern, output)  # Encuentra todas las coincidencias
-
-    if matches:
-        print("Datos extraídos:")
-        for match in matches:
-            queue_number = match[0]  # Número de la cola
-            queue_state = match[1]   # Estado del primer paréntesis
-            queue_status = match[2]  # Estado del segundo paréntesis
-            print(f"Cola: {queue_number}, Estado: {queue_state}, Estado adicional: {queue_status}")
-    else:
-        print("No se encontraron coincidencias.")
-
+    if selected_campaign != 40:
+        if matches:
+            print("\nDatos extraídos:")
+            for match in matches:
+                extension, ringinuse_status, call_status = match
+                colored_status = colorize_state(call_status)
+                print(f"Extensión: {extension}, Ringinuse: {ringinuse_status}, Estado: {colored_status}")
+        else:
+            print("No se encontraron coincidencias.")
+    
 except paramiko.SSHException as e:
     print(f"Error en la conexión SSH: {e}")
 finally:
