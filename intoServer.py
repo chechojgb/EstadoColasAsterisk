@@ -2,6 +2,8 @@ import paramiko
 import re
 import os
 from dotenv import load_dotenv
+import mysql.connector
+
 
 load_dotenv()
 # Server Access Credentials
@@ -9,6 +11,48 @@ USER_SERVER = os.getenv('USER_SERVER')
 PASSWORD_SERVER = os.getenv('PASSWORD_SERVER')
 SERVER_ID = os.getenv('SERVER_ID')
 # DB Access Credentials
+USER_DB=os.getenv('USER_DB')
+PASSWORD_DB=os.getenv('PASSWORD_DB')
+SERVER_ID_DB=os.getenv('SERVER_ID_DB')
+
+# Conect to BD
+print("SERVER_ID_DB:", SERVER_ID_DB)
+
+
+
+def get_user_info_by_extension(extension):
+    conn = mysql.connector.connect(
+        host=SERVER_ID_DB,
+        user=USER_DB,
+        password=PASSWORD_DB,
+        database='miosv2-phone'
+    )
+    cursor = conn.cursor()
+    consulta = "SELECT x.* FROM `miosv2-phone`.usersv2 x WHERE extension = %s"
+    cursor.execute(consulta, (extension,))
+
+    user_info = cursor.fetchone()
+    # print(user_info)
+    conn.close()
+
+    return user_info
+
+def get_call_info_by_user_id(user_id):
+    conn = mysql.connector.connect(
+        host=SERVER_ID_DB,
+        user=USER_DB,
+        password=PASSWORD_DB,
+        database='miosv2-phone'
+    )
+    cursor = conn.cursor()
+    consulta = "SELECT x.* FROM `miosv2-phone`.calls x WHERE user_id = %s ORDER BY x.`start` DESC"
+    cursor.execute(consulta, (user_id,))
+
+    user_info = cursor.fetchone()
+    # print(user_info)
+    conn.close()
+
+    return user_info
 
 
 
@@ -58,32 +102,25 @@ options = [
 print("Hi, what campaign status do you want to see?")
 
 def question_calls():
-    while True:  # Bucle para manejar entradas no válidas
+    while True: 
         for i, option in enumerate(options, start=1):
             print(f"{i}. {option}")
 
         choice = input("Enter the number of the campaign you want to see: ")
 
-        if choice.isdigit():  # Verificar que la entrada sea un número
+        if choice.isdigit():  
             choice = int(choice)
-            if 1 <= choice <= len(options):  # Validar que la opción esté en el rango
+            if 1 <= choice <= len(options): 
                 print(f"You selected campaign number: {choice}")
 
-                # Generar el comando basado en la selección
-                if choice == len(options):  # Si selecciona "ALL CAMPAIGNS"
+                if choice == len(options):  
                     return "rasterisk -rx 'queue show' | sort", choice
-                else:  # Para las campañas individuales
+                else:  
                     return f"rasterisk -rx 'queue show q{choice}' | sort", choice
             else:
                 print("Invalid selection. Please enter a number from the list.")
         else:
             print("Invalid input. Please enter a valid number.")
-
-
-
-
-
-
 
 def execute_query(rasterisk, selected_campaign):
 
@@ -96,8 +133,19 @@ def execute_query(rasterisk, selected_campaign):
             return f"\033[1;31m{state}\033[0m"  # Red
         elif "in call" in state:
             return f"\033[1;34m{state}\033[0m"  # Blue
+        elif "Ringing" in state:
+            return f"\033[1;35m{state}\033[0m"  # Purple
+        elif "Call in progress" in state:
+            return f"\033[1;32m{state}\033[0m"  # Green
         else:
             return state
+    def colorize_call_state(call_state):
+        if call_state == "Call in progress":
+            return f"\033[1;32m{call_state}\033[0m"  # Green
+        elif call_state == "Call finished":
+            return f"\033[1;31m{call_state}\033[0m"  # Red
+        else:
+            return call_state
 
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -124,29 +172,47 @@ def execute_query(rasterisk, selected_campaign):
         members_summary = re.findall(members_pattern, clean_output, re.MULTILINE)
 
         # print(output)
-
-
         if queue_calls:
             print("\nCalls in Queue:")
             for call in queue_calls:
-                print(call, "\n")
+                print(call)
         else:
             print("Calls in Queue:\n    No calls in queue found.\n")
-
 
         filtered_matches = [match for match in matches if match[2] != "Unavailable"]
 
         if selected_campaign != len(options):
             if filtered_matches:
-                print("Connected agents (filtered):")
+                print(f"\nConnected agents (filtered):")
                 for match in filtered_matches:
                     extension, ringinuse_status, call_status = match
-                    colored_status = colorize_state(call_status)
-                    print(f"    Extension: {extension}, State: {colored_status}")
-            else:
-                print(f"Agents Found:\n\n    No agent found online for Q{selected_campaign}.")
-                
+                    
+                    # Primera consulta: Información del usuario
+                    user_info = get_user_info_by_extension(extension)
+                    if user_info:
+                        user_id = user_info[0]
+                        name = user_info[8]
+                        document = user_info[7]
+                        
+                        call_info = get_call_info_by_user_id(user_id)
+                        
+                        if call_info:
+                            call_id = call_info[0]  
+                            call_state = call_info[10]
+                            
+                            if call_state is None: call_state = "Call in progress"
+                            else: call_state = "Call finished"
 
+                            colored_status = colorize_state(call_status)
+                            colored_call_state = colorize_call_state(call_state)
+                            print(f"    Extension: {extension}, Name: {name}, Call ID: {call_id}, Call State: {colored_call_state}, State: {colored_status}")
+                        else:
+                            print(f"    Extension: {extension}, Name: {name}, Document: {document}, No call info found, State: {call_status}")
+                    else:
+                        print(f"    Extension: {extension}, State: {call_status}, User Info not found.")
+            else:
+                print(f"\nConnected agents (filtered):\n\n    No agents Connected")
+                
         if selected_campaign != len(options):
             if members_summary:
                 print("\nQueue Members Summary:")
